@@ -526,8 +526,12 @@ export class GameScene extends Phaser.Scene {
       HapticsAdapter.impactLight();
     }
 
-    // Done processing shot
-    this.isProcessingShot = false;
+    // Silent descent trigger on misses in Classic mode
+    if (this.modeType === GameModeType.CLASSIC_ARCADE && result.threatStatus.shouldShiftDown && result.shiftData) {
+      this.animateGridShiftDown(result.shiftData);
+    } else {
+      this.isProcessingShot = false;
+    }
 
     // Check End Game conditions
     if (result.dangerStatus.isGameOver) {
@@ -537,6 +541,87 @@ export class GameScene extends Phaser.Scene {
         this.handleGameOver();
       });
     }
+  }
+
+  private animateGridShiftDown(shiftData: { shifted: Bubble[]; newRow: Bubble[] }): void {
+    ScreenJuice.shake(this, 0.012, 160);
+    HapticsAdapter.impactHeavy();
+
+    // Ceiling Warning Strobe Effect
+    this.ceilingGlow.clear();
+    this.ceilingGlow.fillStyle(0xff0055, 0.35);
+    this.ceilingGlow.fillRect(0, this.CEILING_Y - 4, this.PLAY_WIDTH, 12);
+
+    this.tweens.add({
+      targets: this.ceilingGlow,
+      alpha: 0,
+      duration: 350,
+      ease: 'Power2',
+      onComplete: () => {
+        this.ceilingGlow.clear();
+        this.ceilingGlow.setAlpha(1);
+      },
+    });
+
+    const newSpriteMap = new Map<string, Phaser.GameObjects.Image>();
+
+    // 1. Shift existing sprites down by rowHeight smoothly
+    for (const b of shiftData.shifted) {
+      const prevKey = HexGrid.getCoordKey(b.row - 1, b.col);
+      const sp = this.bubbleSprites.get(prevKey);
+      const newKey = HexGrid.getCoordKey(b.row, b.col);
+      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
+
+      if (sp) {
+        this.tweens.add({
+          targets: sp,
+          x: targetPos.x,
+          y: targetPos.y,
+          duration: 260,
+          ease: 'Cubic.easeOut',
+        });
+        newSpriteMap.set(newKey, sp);
+      } else {
+        const newSp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
+        newSp.setDepth(10);
+        this.tweens.add({
+          targets: newSp,
+          y: targetPos.y,
+          duration: 260,
+          ease: 'Cubic.easeOut',
+        });
+        newSpriteMap.set(newKey, newSp);
+      }
+    }
+
+    // 2. Animate new top row sliding down from behind the header banner
+    for (const b of shiftData.newRow) {
+      const newKey = HexGrid.getCoordKey(b.row, b.col);
+      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
+
+      const sp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
+      sp.setDepth(10);
+      sp.setAlpha(0);
+      sp.setScale(0.7);
+
+      this.tweens.add({
+        targets: sp,
+        y: targetPos.y,
+        alpha: 1,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 280,
+        ease: 'Back.easeOut',
+      });
+
+      newSpriteMap.set(newKey, sp);
+    }
+
+    this.bubbleSprites = newSpriteMap;
+
+    this.time.delayedCall(300, () => {
+      this.isProcessingShot = false;
+    });
   }
 
   private triggerPeggleFall(sprite: Phaser.GameObjects.Image, color: BubbleColor): void {
