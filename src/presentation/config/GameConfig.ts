@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { BootScene } from '../scenes/BootScene';
 import { GameScene } from '../scenes/GameScene';
+import { GameOverScene } from '../scenes/GameOverScene';
 
 export const GAME_WIDTH = 480;
 export const GAME_HEIGHT = 854; // 16:9 / 9:16 standard mobile portrait
@@ -22,5 +23,5 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, GameScene, GameOverScene],
 };

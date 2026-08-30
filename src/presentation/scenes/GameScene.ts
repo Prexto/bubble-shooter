@@ -12,6 +12,7 @@ import { ParticleFactory } from '../effects/ParticleFactory';
 import { FloatingTextPool } from '../effects/FloatingTextPool';
 import { ScreenJuice } from '../effects/ScreenJuice';
 import { HapticsAdapter } from '../../infrastructure/haptics/HapticsAdapter';
+import { HighScoreRepository } from '../../infrastructure/storage/HighScoreRepository';
 
 import { MultiplierBucketsView } from '../ui/MultiplierBucketsView';
 
@@ -41,7 +42,9 @@ export class GameScene extends Phaser.Scene {
   private isProcessingShot = false;
   private isAiming = false;
   private score = 0;
+  private highScore = 0;
   private scoreText!: Phaser.GameObjects.Text;
+  private highScoreText!: Phaser.GameObjects.Text;
   private threatDots: Phaser.GameObjects.Image[] = [];
   private deathLineSprite!: Phaser.GameObjects.Image;
 
@@ -102,6 +105,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createEnvironment(): void {
+    this.highScore = HighScoreRepository.getHighScore();
+
     // Top HUD Bar Background
     const headerBg = this.add.graphics();
     headerBg.fillStyle(0x0a0c0f, 0.95);
@@ -110,23 +115,38 @@ export class GameScene extends Phaser.Scene {
     headerBg.lineBetween(0, this.CEILING_Y, this.PLAY_WIDTH, this.CEILING_Y);
     headerBg.setDepth(30);
 
-    // Score Label & Value
-    this.add.text(24, 16, 'SCORE', {
+    // Current Score Section (Left)
+    this.add.text(20, 14, 'SCORE', {
       fontFamily: 'Space Grotesk, sans-serif',
-      fontSize: '12px',
+      fontSize: '11px',
       fontStyle: 'bold',
       color: '#00F0FF',
     }).setDepth(31);
 
-    this.scoreText = this.add.text(24, 32, '000000', {
+    this.scoreText = this.add.text(20, 28, '000000', {
       fontFamily: 'Space Grotesk, Outfit, sans-serif',
-      fontSize: '24px',
+      fontSize: '22px',
       fontStyle: 'bold',
       color: '#FFFFFF',
     }).setDepth(31);
 
+    // High Score Section (Center)
+    this.add.text(170, 14, 'BEST', {
+      fontFamily: 'Space Grotesk, sans-serif',
+      fontSize: '11px',
+      fontStyle: 'bold',
+      color: '#FFE600',
+    }).setDepth(31);
+
+    this.highScoreText = this.add.text(170, 28, this.highScore.toString().padStart(6, '0'), {
+      fontFamily: 'Space Grotesk, Outfit, sans-serif',
+      fontSize: '22px',
+      fontStyle: 'bold',
+      color: '#A0AEC0',
+    }).setDepth(31);
+
     // Threat / Miss Indicator (Right Header)
-    this.add.text(this.PLAY_WIDTH - 24, 16, 'THREAT', {
+    this.add.text(this.PLAY_WIDTH - 20, 14, 'THREAT', {
       fontFamily: 'Space Grotesk, sans-serif',
       fontSize: '11px',
       fontStyle: 'bold',
@@ -136,8 +156,8 @@ export class GameScene extends Phaser.Scene {
     this.threatDots = [];
     const maxMisses = this.threatManager.getMaxMisses();
     for (let i = 0; i < maxMisses; i++) {
-      const dot = this.add.image(this.PLAY_WIDTH - 24 - (maxMisses - 1 - i) * 16, 42, 'aim_dot');
-      dot.setScale(0.7);
+      const dot = this.add.image(this.PLAY_WIDTH - 20 - (maxMisses - 1 - i) * 15, 38, 'aim_dot');
+      dot.setScale(0.65);
       dot.setDepth(31);
       this.threatDots.push(dot);
     }
@@ -498,6 +518,12 @@ export class GameScene extends Phaser.Scene {
   private addScore(amount: number): void {
     this.score += amount;
     this.scoreText.setText(this.score.toString().padStart(6, '0'));
+
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      this.highScoreText.setText(this.highScore.toString().padStart(6, '0'));
+      this.highScoreText.setColor('#FFE600');
+    }
   }
 
   private generateInitialGrid(rows: number): void {
@@ -546,17 +572,14 @@ export class GameScene extends Phaser.Scene {
     HapticsAdapter.notificationWarning();
     this.isProcessingShot = true;
 
-    this.add.text(this.PLAY_WIDTH / 2, 400, 'GAME OVER', {
-      fontFamily: 'Space Grotesk, Outfit, sans-serif',
-      fontSize: '42px',
-      fontStyle: 'bold',
-      color: '#FF0055',
-      stroke: '#0e1013',
-      strokeThickness: 6,
-    }).setOrigin(0.5).setDepth(100);
+    const recordResult = HighScoreRepository.saveScore(this.score);
 
-    this.time.delayedCall(2000, () => {
-      this.scene.restart();
+    this.time.delayedCall(600, () => {
+      this.scene.launch('GameOverScene', {
+        score: this.score,
+        highScore: recordResult.highScore,
+        isNewRecord: recordResult.isNewRecord,
+      });
     });
   }
 }
