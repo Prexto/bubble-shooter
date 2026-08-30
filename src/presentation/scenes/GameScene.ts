@@ -60,7 +60,6 @@ export class GameScene extends Phaser.Scene {
   // HUD Elements
   private scoreText!: Phaser.GameObjects.Text;
   private modeSpecialText!: Phaser.GameObjects.Text;
-  private threatDots: Phaser.GameObjects.Image[] = [];
   private deathLineSprite!: Phaser.GameObjects.Image;
   private ceilingGlow!: Phaser.GameObjects.Graphics;
 
@@ -209,67 +208,47 @@ export class GameScene extends Phaser.Scene {
 
     // Center Display (Time, Shots or Best)
     if (this.modeType === GameModeType.TIME_ATTACK) {
-      this.add.text(this.PLAY_WIDTH / 2 - 15, 14, 'TIME', {
+      this.add.text(this.PLAY_WIDTH / 2, 14, 'TIME', {
         fontFamily: 'Space Grotesk, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
         color: '#FFE600',
       }).setOrigin(0.5, 0).setDepth(31);
 
-      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2 - 15, 28, `${this.timeRemaining}s`, {
+      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2, 28, `${this.timeRemaining}s`, {
         fontFamily: 'Space Grotesk, Outfit, sans-serif',
         fontSize: '22px',
         fontStyle: 'bold',
         color: '#FFE600',
       }).setOrigin(0.5, 0).setDepth(31);
     } else if (this.modeType === GameModeType.PEGGLE_FEVER) {
-      this.add.text(this.PLAY_WIDTH / 2 - 15, 14, 'SHOTS', {
+      this.add.text(this.PLAY_WIDTH / 2, 14, 'SHOTS', {
         fontFamily: 'Space Grotesk, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
         color: '#B026FF',
       }).setOrigin(0.5, 0).setDepth(31);
 
-      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2 - 15, 28, `${this.shotsRemaining}`, {
+      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2, 28, `${this.shotsRemaining}`, {
         fontFamily: 'Space Grotesk, Outfit, sans-serif',
         fontSize: '22px',
         fontStyle: 'bold',
         color: '#B026FF',
       }).setOrigin(0.5, 0).setDepth(31);
     } else {
-      this.add.text(150, 14, 'BEST', {
+      this.add.text(this.PLAY_WIDTH / 2, 14, 'BEST RECORD', {
         fontFamily: 'Space Grotesk, sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
         color: '#FFE600',
-      }).setDepth(31);
+      }).setOrigin(0.5, 0).setDepth(31);
 
-      this.add.text(150, 28, this.highScore.toString().padStart(6, '0'), {
+      this.add.text(this.PLAY_WIDTH / 2, 28, this.highScore.toString().padStart(6, '0'), {
         fontFamily: 'Space Grotesk, Outfit, sans-serif',
         fontSize: '22px',
         fontStyle: 'bold',
-        color: '#A0AEC0',
-      }).setDepth(31);
-    }
-
-    // Threat Indicator (Classic mode only)
-    if (this.modeType === GameModeType.CLASSIC_ARCADE) {
-      this.add.text(this.PLAY_WIDTH - 65, 14, 'THREAT', {
-        fontFamily: 'Space Grotesk, sans-serif',
-        fontSize: '11px',
-        fontStyle: 'bold',
-        color: '#FF0055',
-      }).setOrigin(1, 0).setDepth(31);
-
-      this.threatDots = [];
-      const maxMisses = this.threatManager.getMaxMisses();
-      for (let i = 0; i < maxMisses; i++) {
-        const dot = this.add.image(this.PLAY_WIDTH - 65 - (maxMisses - 1 - i) * 14, 38, 'aim_dot');
-        dot.setScale(0.6);
-        dot.setDepth(31);
-        this.threatDots.push(dot);
-      }
-      this.updateThreatUI();
+        color: '#FFFFFF',
+      }).setOrigin(0.5, 0).setDepth(31);
     }
 
     // Top-Right Pause Button (⏸)
@@ -547,16 +526,8 @@ export class GameScene extends Phaser.Scene {
       HapticsAdapter.impactLight();
     }
 
-    if (this.modeType === GameModeType.CLASSIC_ARCADE) {
-      this.updateThreatUI();
-      if (result.threatStatus.shouldShiftDown && result.shiftData) {
-        this.animateGridShiftDown(result.shiftData);
-      } else {
-        this.isProcessingShot = false;
-      }
-    } else {
-      this.isProcessingShot = false;
-    }
+    // Done processing shot
+    this.isProcessingShot = false;
 
     // Check End Game conditions
     if (result.dangerStatus.isGameOver) {
@@ -593,105 +564,6 @@ export class GameScene extends Phaser.Scene {
         }
       },
     });
-  }
-
-  private animateGridShiftDown(shiftData: { shifted: Bubble[]; newRow: Bubble[] }): void {
-    ScreenJuice.shake(this, 0.012, 160);
-    HapticsAdapter.impactHeavy();
-
-    // Ceiling Warning Strobe Effect
-    this.ceilingGlow.clear();
-    this.ceilingGlow.fillStyle(0xff0055, 0.35);
-    this.ceilingGlow.fillRect(0, this.CEILING_Y - 4, this.PLAY_WIDTH, 12);
-
-    this.tweens.add({
-      targets: this.ceilingGlow,
-      alpha: 0,
-      duration: 350,
-      ease: 'Power2',
-      onComplete: () => {
-        this.ceilingGlow.clear();
-        this.ceilingGlow.setAlpha(1);
-      },
-    });
-
-    const newSpriteMap = new Map<string, Phaser.GameObjects.Image>();
-
-    // 1. Shift existing sprites down by rowHeight smoothly (X remains exactly identical!)
-    for (const b of shiftData.shifted) {
-      const prevKey = HexGrid.getCoordKey(b.row - 1, b.col);
-      const sp = this.bubbleSprites.get(prevKey);
-      const newKey = HexGrid.getCoordKey(b.row, b.col);
-      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
-
-      if (sp) {
-        this.tweens.add({
-          targets: sp,
-          x: targetPos.x,
-          y: targetPos.y,
-          duration: 260,
-          ease: 'Cubic.easeOut',
-        });
-        newSpriteMap.set(newKey, sp);
-      } else {
-        const newSp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
-        newSp.setDepth(10);
-        this.tweens.add({
-          targets: newSp,
-          y: targetPos.y,
-          duration: 260,
-          ease: 'Cubic.easeOut',
-        });
-        newSpriteMap.set(newKey, newSp);
-      }
-    }
-
-    // 2. Animate new top row sliding down from behind the header banner
-    for (const b of shiftData.newRow) {
-      const newKey = HexGrid.getCoordKey(b.row, b.col);
-      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
-
-      const sp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
-      sp.setDepth(10);
-      sp.setAlpha(0);
-      sp.setScale(0.7);
-
-      this.tweens.add({
-        targets: sp,
-        y: targetPos.y,
-        alpha: 1,
-        scaleX: 1,
-        scaleY: 1,
-        duration: 280,
-        ease: 'Back.easeOut',
-      });
-
-      newSpriteMap.set(newKey, sp);
-    }
-
-    this.bubbleSprites = newSpriteMap;
-
-    this.time.delayedCall(300, () => {
-      this.isProcessingShot = false;
-    });
-  }
-
-  private updateThreatUI(): void {
-    const currentMisses = this.threatManager.getMisses();
-    const maxMisses = this.threatManager.getMaxMisses();
-
-    for (let i = 0; i < maxMisses; i++) {
-      const dot = this.threatDots[i];
-      if (dot) {
-        if (i < currentMisses) {
-          dot.setTint(0xff0055);
-          dot.setAlpha(1);
-        } else {
-          dot.clearTint();
-          dot.setAlpha(0.3);
-        }
-      }
-    }
   }
 
   private addScore(amount: number): void {
