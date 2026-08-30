@@ -22,9 +22,13 @@ export class MultiplierBucketsView {
   private readonly totalWidth = 480;
   private readonly bucketWidth: number;
 
-  constructor(scene: Phaser.Scene, onCatchCallback: (event: BucketCatchEvent) => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onCatchCallback: (event: BucketCatchEvent) => void,
+    customBuckets?: MultiplierBucket[]
+  ) {
     this.scene = scene;
-    this.buckets = DEFAULT_MULTIPLIER_BUCKETS;
+    this.buckets = customBuckets ?? DEFAULT_MULTIPLIER_BUCKETS;
     this.bucketWidth = this.totalWidth / this.buckets.length; // 96px each
 
     this.dividerPinsGroup = scene.physics.add.staticGroup();

@@ -12,11 +12,16 @@ import { ParticleFactory } from '../effects/ParticleFactory';
 import { FloatingTextPool } from '../effects/FloatingTextPool';
 import { ScreenJuice } from '../effects/ScreenJuice';
 import { HapticsAdapter } from '../../infrastructure/haptics/HapticsAdapter';
-import { HighScoreRepository } from '../../infrastructure/storage/HighScoreRepository';
-
+import { AuthRepository } from '../../infrastructure/auth/AuthRepository';
+import { GAME_MODES, GameModeConfig, GameModeType } from '../../core/domain/models/GameMode';
 import { MultiplierBucketsView } from '../ui/MultiplierBucketsView';
+import { PauseModal } from '../ui/PauseModal';
 
 export class GameScene extends Phaser.Scene {
+  // Mode & Config
+  public modeType: GameModeType = GameModeType.CLASSIC_ARCADE;
+  private modeConfig!: GameModeConfig;
+
   // Domain State
   private grid!: HexGrid;
   private threatManager!: ThreatManager;
@@ -28,6 +33,7 @@ export class GameScene extends Phaser.Scene {
   private aimGuide!: AimGuide;
   private cannon!: CannonView;
   private multiplierBuckets!: MultiplierBucketsView;
+  private pauseModal!: PauseModal;
 
   // Active Projectile
   private activeProjectile: Phaser.Types.Physics.Arcade.ImageWithDynamicBody | null = null;
@@ -41,10 +47,19 @@ export class GameScene extends Phaser.Scene {
   // Gameplay State
   private isProcessingShot = false;
   private isAiming = false;
+  private isPaused = false;
   private score = 0;
   private highScore = 0;
+  private highestMultiplierAchieved = 1;
+
+  // Mode Specific Trackers
+  private timeRemaining = 60;
+  private timerEvent: Phaser.Time.TimerEvent | null = null;
+  private shotsRemaining = 15;
+
+  // HUD Elements
   private scoreText!: Phaser.GameObjects.Text;
-  private highScoreText!: Phaser.GameObjects.Text;
+  private modeSpecialText!: Phaser.GameObjects.Text;
   private threatDots: Phaser.GameObjects.Image[] = [];
   private deathLineSprite!: Phaser.GameObjects.Image;
 
@@ -57,15 +72,26 @@ export class GameScene extends Phaser.Scene {
     super({ key: 'GameScene' });
   }
 
+  public init(data?: { mode?: GameModeType }): void {
+    this.modeType = data?.mode ?? GameModeType.CLASSIC_ARCADE;
+    this.modeConfig = GAME_MODES[this.modeType];
+    this.isPaused = false;
+    this.isProcessingShot = false;
+    this.score = 0;
+    this.highestMultiplierAchieved = 1;
+    this.timeRemaining = this.modeConfig.timeLimitSec ?? 60;
+    this.shotsRemaining = this.modeConfig.maxShots ?? 15;
+  }
+
   public create(): void {
     // 1. Initialize Domain Entities & Metrics
     this.grid = new HexGrid({ evenCols: 8, oddCols: 7, maxRows: 13, deathLineRow: 11 });
-    this.threatManager = new ThreatManager({ maxMisses: 5 });
+    this.threatManager = new ThreatManager({ maxMisses: this.modeConfig.maxMissesBeforeDescent ?? 5 });
     this.metrics = HexMath.calculateMetrics(this.PLAY_WIDTH, 8, this.CEILING_Y + 28);
 
     // 2. Setup Physics World Bounds
     this.physics.world.setBounds(0, this.CEILING_Y, this.PLAY_WIDTH, 854 - this.CEILING_Y);
-    this.physics.world.checkCollision.down = false; // Allow falling bubbles to exit through bottom
+    this.physics.world.checkCollision.down = false; // Allow falling bubbles to exit bottom
 
     // 3. Falling Bubbles Physics Group (for Peggle gravity drops)
     this.fallingBubblesGroup = this.physics.add.group({
@@ -73,39 +99,85 @@ export class GameScene extends Phaser.Scene {
       bounceY: 0.6,
       collideWorldBounds: true,
     });
-    // Bubbles bounce between each other in mid-air
     this.physics.add.collider(this.fallingBubblesGroup, this.fallingBubblesGroup);
 
-    // 4. Create Background, Walls & Header HUD
-    this.createEnvironment();
-
-    // 5. Create Multiplier Buckets & Register Overlaps
-    this.multiplierBuckets = new MultiplierBucketsView(this, (event) => {
-      this.addScore(event.scoreAwarded);
-    });
+    // 4. Create Multiplier Buckets with Mode-Specific Configuration
+    this.multiplierBuckets = new MultiplierBucketsView(
+      this,
+      (event) => {
+        if (event.bucket.multiplier > this.highestMultiplierAchieved) {
+          this.highestMultiplierAchieved = event.bucket.multiplier;
+        }
+        this.addScore(event.scoreAwarded);
+      },
+      this.modeConfig.buckets
+    );
     this.multiplierBuckets.registerFallingOverlap(this.fallingBubblesGroup, (event) => {
+      if (event.bucket.multiplier > this.highestMultiplierAchieved) {
+        this.highestMultiplierAchieved = event.bucket.multiplier;
+      }
       this.addScore(event.scoreAwarded);
     });
+
+    // 5. Create Background, Walls & Header HUD
+    this.createEnvironment();
 
     // 6. Create Aim Guide & Cannon
     this.aimGuide = new AimGuide(this);
     this.cannon = new CannonView(this, this.PLAY_WIDTH / 2, this.CANNON_Y);
 
-    // 6. Queue Initial Colors
+    // 7. Queue Initial Colors
     this.currentBubbleColor = this.getRandomActiveColor();
     this.nextBubbleColor = this.getRandomActiveColor();
     this.cannon.setActiveColor(this.currentBubbleColor);
     this.cannon.setNextColor(this.nextBubbleColor);
 
-    // 7. Populate Initial Grid (First 5 Rows)
+    // 8. Populate Initial Grid
     this.generateInitialGrid(5);
 
-    // 8. Register Touch / Pointer Input Listeners
+    // 9. Register Touch / Pointer Input Listeners
     this.setupInputHandlers();
+
+    // 10. Pause Modal
+    this.pauseModal = new PauseModal(this, {
+      onResume: () => {
+        this.isPaused = false;
+        this.physics.resume();
+      },
+      onRestart: () => {
+        this.scene.restart({ mode: this.modeType });
+      },
+      onQuit: () => {
+        this.scene.start('HomeScene');
+      },
+    });
+
+    // 11. Mode Specific Timers
+    if (this.modeType === GameModeType.TIME_ATTACK) {
+      this.timerEvent = this.time.addEvent({
+        delay: 1000,
+        repeat: 60,
+        callback: () => {
+          if (this.isPaused) return;
+          this.timeRemaining -= 1;
+          if (this.modeSpecialText) {
+            this.modeSpecialText.setText(`${this.timeRemaining}s`);
+          }
+          if (this.timeRemaining <= 0) {
+            this.handleGameOver();
+          }
+        },
+      });
+    }
   }
 
   private createEnvironment(): void {
-    this.highScore = HighScoreRepository.getHighScore();
+    const user = AuthRepository.getCurrentUser();
+    if (user) {
+      if (this.modeType === GameModeType.CLASSIC_ARCADE) this.highScore = user.stats.classicHighScore;
+      else if (this.modeType === GameModeType.TIME_ATTACK) this.highScore = user.stats.timeAttackHighScore;
+      else if (this.modeType === GameModeType.PEGGLE_FEVER) this.highScore = user.stats.peggleFeverHighScore;
+    }
 
     // Top HUD Bar Background
     const headerBg = this.add.graphics();
@@ -116,52 +188,111 @@ export class GameScene extends Phaser.Scene {
     headerBg.setDepth(30);
 
     // Current Score Section (Left)
-    this.add.text(20, 14, 'SCORE', {
+    this.add.text(18, 14, 'SCORE', {
       fontFamily: 'Space Grotesk, sans-serif',
       fontSize: '11px',
       fontStyle: 'bold',
       color: '#00F0FF',
     }).setDepth(31);
 
-    this.scoreText = this.add.text(20, 28, '000000', {
+    this.scoreText = this.add.text(18, 28, '000000', {
       fontFamily: 'Space Grotesk, Outfit, sans-serif',
       fontSize: '22px',
       fontStyle: 'bold',
       color: '#FFFFFF',
     }).setDepth(31);
 
-    // High Score Section (Center)
-    this.add.text(170, 14, 'BEST', {
-      fontFamily: 'Space Grotesk, sans-serif',
-      fontSize: '11px',
-      fontStyle: 'bold',
-      color: '#FFE600',
-    }).setDepth(31);
+    // Center Display (Time, Shots or Best)
+    if (this.modeType === GameModeType.TIME_ATTACK) {
+      this.add.text(this.PLAY_WIDTH / 2 - 15, 14, 'TIME', {
+        fontFamily: 'Space Grotesk, sans-serif',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: '#FFE600',
+      }).setOrigin(0.5, 0).setDepth(31);
 
-    this.highScoreText = this.add.text(170, 28, this.highScore.toString().padStart(6, '0'), {
-      fontFamily: 'Space Grotesk, Outfit, sans-serif',
-      fontSize: '22px',
-      fontStyle: 'bold',
-      color: '#A0AEC0',
-    }).setDepth(31);
+      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2 - 15, 28, `${this.timeRemaining}s`, {
+        fontFamily: 'Space Grotesk, Outfit, sans-serif',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#FFE600',
+      }).setOrigin(0.5, 0).setDepth(31);
+    } else if (this.modeType === GameModeType.PEGGLE_FEVER) {
+      this.add.text(this.PLAY_WIDTH / 2 - 15, 14, 'SHOTS', {
+        fontFamily: 'Space Grotesk, sans-serif',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: '#B026FF',
+      }).setOrigin(0.5, 0).setDepth(31);
 
-    // Threat / Miss Indicator (Right Header)
-    this.add.text(this.PLAY_WIDTH - 20, 14, 'THREAT', {
-      fontFamily: 'Space Grotesk, sans-serif',
-      fontSize: '11px',
-      fontStyle: 'bold',
-      color: '#FF0055',
-    }).setOrigin(1, 0).setDepth(31);
+      this.modeSpecialText = this.add.text(this.PLAY_WIDTH / 2 - 15, 28, `${this.shotsRemaining}`, {
+        fontFamily: 'Space Grotesk, Outfit, sans-serif',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#B026FF',
+      }).setOrigin(0.5, 0).setDepth(31);
+    } else {
+      this.add.text(150, 14, 'BEST', {
+        fontFamily: 'Space Grotesk, sans-serif',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: '#FFE600',
+      }).setDepth(31);
 
-    this.threatDots = [];
-    const maxMisses = this.threatManager.getMaxMisses();
-    for (let i = 0; i < maxMisses; i++) {
-      const dot = this.add.image(this.PLAY_WIDTH - 20 - (maxMisses - 1 - i) * 15, 38, 'aim_dot');
-      dot.setScale(0.65);
-      dot.setDepth(31);
-      this.threatDots.push(dot);
+      this.add.text(150, 28, this.highScore.toString().padStart(6, '0'), {
+        fontFamily: 'Space Grotesk, Outfit, sans-serif',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#A0AEC0',
+      }).setDepth(31);
     }
-    this.updateThreatUI();
+
+    // Threat Indicator (Classic mode only)
+    if (this.modeType === GameModeType.CLASSIC_ARCADE) {
+      this.add.text(this.PLAY_WIDTH - 65, 14, 'THREAT', {
+        fontFamily: 'Space Grotesk, sans-serif',
+        fontSize: '11px',
+        fontStyle: 'bold',
+        color: '#FF0055',
+      }).setOrigin(1, 0).setDepth(31);
+
+      this.threatDots = [];
+      const maxMisses = this.threatManager.getMaxMisses();
+      for (let i = 0; i < maxMisses; i++) {
+        const dot = this.add.image(this.PLAY_WIDTH - 65 - (maxMisses - 1 - i) * 14, 38, 'aim_dot');
+        dot.setScale(0.6);
+        dot.setDepth(31);
+        this.threatDots.push(dot);
+      }
+      this.updateThreatUI();
+    }
+
+    // Top-Right Pause Button (⏸)
+    const pauseBtn = this.add.container(this.PLAY_WIDTH - 28, 35);
+    const pauseBg = this.add.graphics();
+    pauseBg.fillStyle(0x1a212d, 1);
+    pauseBg.fillRoundedRect(-18, -18, 36, 36, 8);
+    pauseBg.lineStyle(1.5, 0x2d3748, 1);
+    pauseBg.strokeRoundedRect(-18, -18, 36, 36, 8);
+
+    const pauseIcon = this.add.text(0, 0, '❚❚', {
+      fontFamily: 'Outfit, sans-serif',
+      fontSize: '14px',
+      fontStyle: 'bold',
+      color: '#FFFFFF',
+    }).setOrigin(0.5);
+
+    pauseBtn.add([pauseBg, pauseIcon]);
+    pauseBtn.setSize(36, 36);
+    pauseBtn.setInteractive({ useHandCursor: true });
+    pauseBtn.setDepth(35);
+
+    pauseBtn.on('pointerdown', () => {
+      HapticsAdapter.impactLight();
+      this.isPaused = true;
+      this.physics.pause();
+      this.pauseModal.show();
+    });
 
     // Death Line Indicator
     const deathY = this.metrics.startY + this.grid.config.deathLineRow * this.metrics.rowHeight;
@@ -169,7 +300,6 @@ export class GameScene extends Phaser.Scene {
     this.deathLineSprite.setDepth(10);
     this.deathLineSprite.setAlpha(0.6);
 
-    // Pulse animation on death line
     this.tweens.add({
       targets: this.deathLineSprite,
       alpha: 0.9,
@@ -182,18 +312,18 @@ export class GameScene extends Phaser.Scene {
 
   private setupInputHandlers(): void {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.isProcessingShot || pointer.y < this.CEILING_Y) return;
+      if (this.isPaused || this.isProcessingShot || pointer.y < this.CEILING_Y) return;
       this.isAiming = true;
       this.handleAim(pointer);
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (!this.isAiming || this.isProcessingShot) return;
+      if (!this.isAiming || this.isProcessingShot || this.isPaused) return;
       this.handleAim(pointer);
     });
 
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      if (!this.isAiming || this.isProcessingShot) {
+      if (!this.isAiming || this.isProcessingShot || this.isPaused) {
         this.isAiming = false;
         this.aimGuide.hide();
         return;
@@ -206,8 +336,6 @@ export class GameScene extends Phaser.Scene {
 
   private handleAim(pointer: Phaser.Input.Pointer): void {
     const angle = Phaser.Math.Angle.Between(this.cannon.x, this.cannon.y, pointer.x, pointer.y);
-
-    // Restrict shooting to upwards cone (-170 deg to -10 deg)
     const normalizedAngle = Phaser.Math.Angle.Normalize(angle);
     const deg = Phaser.Math.RadToDeg(normalizedAngle);
 
@@ -218,7 +346,6 @@ export class GameScene extends Phaser.Scene {
 
     this.cannon.setRotation(angle);
 
-    // Build obstacle list for raycast aim collision
     const obstacles = Array.from(this.bubbleSprites.entries()).map(([key, _sprite]) => {
       const [r, c] = key.split(',').map(Number);
       const cellPos = HexMath.hexToPixel({ row: r ?? 0, col: c ?? 0 }, this.metrics);
@@ -249,13 +376,19 @@ export class GameScene extends Phaser.Scene {
 
     if (deg < 190 || deg > 350) return;
 
+    if (this.modeType === GameModeType.PEGGLE_FEVER) {
+      this.shotsRemaining -= 1;
+      if (this.modeSpecialText) {
+        this.modeSpecialText.setText(`${this.shotsRemaining}`);
+      }
+    }
+
     this.isProcessingShot = true;
     this.cannon.fireRecoil();
 
     const muzzle = this.cannon.getMuzzlePosition();
     this.activeProjectileColor = this.currentBubbleColor;
 
-    // Create projectile physics sprite
     this.activeProjectile = this.physics.add.image(
       muzzle.x,
       muzzle.y,
@@ -266,7 +399,6 @@ export class GameScene extends Phaser.Scene {
     this.activeProjectile.setCollideWorldBounds(true);
     this.activeProjectile.setDepth(24);
 
-    // Check wall bounce for haptic feedback
     this.activeProjectile.body.onWorldBounds = true;
     this.physics.world.on('worldbounds', (body: Phaser.Physics.Arcade.Body) => {
       if (body.gameObject === this.activeProjectile) {
@@ -274,15 +406,12 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Speed: 1300 px/s
     const speed = 1300;
     this.activeProjectile.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
 
-    // Trail particle emitter
     this.projectileTrail = ParticleFactory.createProjectileTrail(this, this.activeProjectileColor);
     this.projectileTrail.startFollow(this.activeProjectile);
 
-    // Queue Next Bubble Reload
     const oldNext = this.nextBubbleColor;
     this.currentBubbleColor = oldNext;
     this.nextBubbleColor = this.getRandomActiveColor();
@@ -290,19 +419,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   public update(): void {
-    if (!this.activeProjectile || !this.activeProjectileColor) return;
+    if (this.isPaused || !this.activeProjectile || !this.activeProjectileColor) return;
 
     const proj = this.activeProjectile;
     const projX = proj.x;
     const projY = proj.y;
 
-    // 1. Check Ceiling Collision
     if (projY <= this.CEILING_Y + this.metrics.bubbleRadius + 2) {
       this.snapAndResolveProjectile(null);
       return;
     }
 
-    // 2. Check Collision with Active Grid Bubbles
     for (const [key, sprite] of this.bubbleSprites.entries()) {
       const dx = projX - sprite.x;
       const dy = projY - sprite.y;
@@ -323,7 +450,6 @@ export class GameScene extends Phaser.Scene {
     const impactPoint = { x: this.activeProjectile.x, y: this.activeProjectile.y };
     const bubbleColor = this.activeProjectileColor;
 
-    // Cleanup Projectile & Trail
     this.projectileTrail?.stop();
     this.projectileTrail?.destroy();
     this.projectileTrail = null;
@@ -331,7 +457,6 @@ export class GameScene extends Phaser.Scene {
     this.activeProjectile = null;
     this.activeProjectileColor = null;
 
-    // 1. Compute Hexagonal Snap Coordinate
     const snapCoord = SnapBubbleUseCase.execute(
       impactPoint,
       hitCoord,
@@ -344,7 +469,6 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // 2. Create Domain Bubble & Visual Sprite
     const newBubble = new Bubble({
       id: `b_${Date.now()}_${Math.random()}`,
       row: snapCoord.row,
@@ -357,7 +481,6 @@ export class GameScene extends Phaser.Scene {
     sprite.setDepth(10);
     sprite.setScale(0.2);
 
-    // Pop-in bounce tween
     this.tweens.add({
       targets: sprite,
       scaleX: 1,
@@ -369,7 +492,6 @@ export class GameScene extends Phaser.Scene {
     const key = HexGrid.getCoordKey(snapCoord.row, snapCoord.col);
     this.bubbleSprites.set(key, sprite);
 
-    // 3. Process Matches, Orphans and Threat Step
     const result = ProcessGridMatchesUseCase.execute(
       newBubble,
       this.grid,
@@ -382,7 +504,6 @@ export class GameScene extends Phaser.Scene {
 
   private handleMatchResolution(result: ReturnType<typeof ProcessGridMatchesUseCase.execute>): void {
     if (result.wasMatch) {
-      // High-impact haptic feedback for large combos
       if (result.matchedBubbles.length >= 5 || result.orphanBubbles.length >= 3) {
         HapticsAdapter.impactHeavy();
         ScreenJuice.shake(this, 0.012, 120);
@@ -391,7 +512,6 @@ export class GameScene extends Phaser.Scene {
         ScreenJuice.shake(this, 0.006, 80);
       }
 
-      // 1. Animate Matched Bubbles Popping
       for (const matched of result.matchedBubbles) {
         const key = HexGrid.getCoordKey(matched.row, matched.col);
         const sp = this.bubbleSprites.get(key);
@@ -402,7 +522,6 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // Add Match Score
       const matchScore = result.matchedBubbles.length * 100;
       this.addScore(matchScore);
       const centerMatched = result.matchedBubbles[0];
@@ -411,7 +530,6 @@ export class GameScene extends Phaser.Scene {
         FloatingTextPool.show(this, pos.x, pos.y, `+${matchScore}`, '#00F0FF', 22);
       }
 
-      // 2. Animate Disconnected Orphan Bubbles (Peggle Gravity Drop)
       for (const orphan of result.orphanBubbles) {
         const key = HexGrid.getCoordKey(orphan.row, orphan.col);
         const sp = this.bubbleSprites.get(key);
@@ -424,19 +542,24 @@ export class GameScene extends Phaser.Scene {
       HapticsAdapter.impactLight();
     }
 
-    // 3. Update Threat UI
-    this.updateThreatUI();
-
-    // 4. Handle Shift Down (Silent Descent)
-    if (result.threatStatus.shouldShiftDown && result.shiftedBubbles) {
-      this.animateGridShiftDown(result.shiftedBubbles);
+    if (this.modeType === GameModeType.CLASSIC_ARCADE) {
+      this.updateThreatUI();
+      if (result.threatStatus.shouldShiftDown && result.shiftedBubbles) {
+        this.animateGridShiftDown(result.shiftedBubbles);
+      } else {
+        this.isProcessingShot = false;
+      }
     } else {
       this.isProcessingShot = false;
     }
 
-    // 5. Check Death Line / Game Over
+    // Check End Game conditions
     if (result.dangerStatus.isGameOver) {
       this.handleGameOver();
+    } else if (this.modeType === GameModeType.PEGGLE_FEVER && this.shotsRemaining <= 0) {
+      this.time.delayedCall(1200, () => {
+        this.handleGameOver();
+      });
     }
   }
 
@@ -445,19 +568,17 @@ export class GameScene extends Phaser.Scene {
     const y = sprite.y;
     sprite.destroy();
 
-    // Create dynamic physics falling bubble
     const falling = this.fallingBubblesGroup.create(x, y, `bubble_${color}`) as Phaser.Types.Physics.Arcade.ImageWithDynamicBody;
     falling.setCircle(this.metrics.bubbleRadius);
     falling.setDepth(18);
-    falling.setGravityY(1100); // Strong arcade gravity
+    falling.setGravityY(1100);
     falling.setVelocity(
       Phaser.Math.Between(-140, 140),
       Phaser.Math.Between(-180, -60)
     );
     falling.setAngularVelocity(Phaser.Math.Between(-300, 300));
-    falling.setBounce(0.5, 0.4);
+    falling.setBounce(0.6, 0.5);
 
-    // Auto cleanup once it exits below screen
     this.time.addEvent({
       delay: 100,
       repeat: 40,
@@ -473,7 +594,6 @@ export class GameScene extends Phaser.Scene {
     ScreenJuice.shake(this, 0.008, 100);
     HapticsAdapter.impactMedium();
 
-    // Reposition visual sprites cleanly
     this.bubbleSprites.forEach((sp) => sp.destroy());
     this.bubbleSprites.clear();
 
@@ -518,12 +638,6 @@ export class GameScene extends Phaser.Scene {
   private addScore(amount: number): void {
     this.score += amount;
     this.scoreText.setText(this.score.toString().padStart(6, '0'));
-
-    if (this.score > this.highScore) {
-      this.highScore = this.score;
-      this.highScoreText.setText(this.highScore.toString().padStart(6, '0'));
-      this.highScoreText.setColor('#FFE600');
-    }
   }
 
   private generateInitialGrid(rows: number): void {
@@ -568,17 +682,34 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleGameOver(): void {
+    if (this.timerEvent) {
+      this.timerEvent.destroy();
+      this.timerEvent = null;
+    }
+
     ScreenJuice.shake(this, 0.02, 300);
     HapticsAdapter.notificationWarning();
     this.isProcessingShot = true;
 
-    const recordResult = HighScoreRepository.saveScore(this.score);
+    // Save Game Result to User Profile
+    const user = AuthRepository.getCurrentUser();
+    let isNewRecord = false;
+    let modeHighScore = this.score;
 
-    this.time.delayedCall(600, () => {
+    if (user) {
+      isNewRecord = user.recordGameResult(this.modeType, this.score, this.highestMultiplierAchieved);
+      AuthRepository.saveUser(user);
+      if (this.modeType === GameModeType.CLASSIC_ARCADE) modeHighScore = user.stats.classicHighScore;
+      else if (this.modeType === GameModeType.TIME_ATTACK) modeHighScore = user.stats.timeAttackHighScore;
+      else if (this.modeType === GameModeType.PEGGLE_FEVER) modeHighScore = user.stats.peggleFeverHighScore;
+    }
+
+    this.time.delayedCall(500, () => {
       this.scene.launch('GameOverScene', {
         score: this.score,
-        highScore: recordResult.highScore,
-        isNewRecord: recordResult.isNewRecord,
+        highScore: modeHighScore,
+        isNewRecord,
+        mode: this.modeType,
       });
     });
   }

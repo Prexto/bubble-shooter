@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { BootScene } from '../scenes/BootScene';
+import { AuthScene } from '../scenes/AuthScene';
+import { HomeScene } from '../scenes/HomeScene';
 import { GameScene } from '../scenes/GameScene';
 import { GameOverScene } from '../scenes/GameOverScene';
 
@@ -23,5 +25,5 @@ export const GameConfig: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, GameScene, GameOverScene],
+  scene: [BootScene, AuthScene, HomeScene, GameScene, GameOverScene],
 };

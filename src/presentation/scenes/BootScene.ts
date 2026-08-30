@@ -14,7 +14,7 @@ export class BootScene extends Phaser.Scene {
     // Generate all procedural in-memory vector textures
     TextureGenerator.generateAll(this);
 
-    // Transition directly to GameScene
-    this.scene.start('GameScene');
+    // Transition to AuthScene / HomeScene
+    this.scene.start('AuthScene');
   }
 }

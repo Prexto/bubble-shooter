@@ -1,10 +1,12 @@
 import Phaser from 'phaser';
 import { HapticsAdapter } from '../../infrastructure/haptics/HapticsAdapter';
+import { GameModeType } from '../../core/domain/models/GameMode';
 
 export interface GameOverData {
   score: number;
   highScore: number;
   isNewRecord: boolean;
+  mode?: GameModeType;
 }
 
 export class GameOverScene extends Phaser.Scene {
@@ -38,16 +40,16 @@ export class GameOverScene extends Phaser.Scene {
 
     const cardBg = this.add.graphics();
     cardBg.fillStyle(0x13171f, 1);
-    cardBg.fillRoundedRect(-180, -200, 360, 400, 16);
+    cardBg.fillRoundedRect(-180, -210, 360, 420, 16);
     cardBg.lineStyle(2, 0x2d333f, 1);
-    cardBg.strokeRoundedRect(-180, -200, 360, 400, 16);
+    cardBg.strokeRoundedRect(-180, -210, 360, 420, 16);
 
     // Header Accent Line
     cardBg.lineStyle(3, 0xff0055, 1);
-    cardBg.lineBetween(-120, -198, 120, -198);
+    cardBg.lineBetween(-120, -208, 120, -208);
 
     // Title: GAME OVER
-    const title = this.add.text(0, -150, 'GAME OVER', {
+    const title = this.add.text(0, -160, 'GAME OVER', {
       fontFamily: 'Space Grotesk, Outfit, sans-serif',
       fontSize: '36px',
       fontStyle: 'bold',
@@ -58,7 +60,7 @@ export class GameOverScene extends Phaser.Scene {
 
     // New High Score Banner (if achieved)
     if (data.isNewRecord) {
-      const banner = this.add.text(0, -105, '★ NEW HIGH SCORE! ★', {
+      const banner = this.add.text(0, -115, '★ ¡NUEVO RÉCORD! ★', {
         fontFamily: 'Space Grotesk, sans-serif',
         fontSize: '14px',
         fontStyle: 'bold',
@@ -78,16 +80,16 @@ export class GameOverScene extends Phaser.Scene {
     }
 
     // Final Score Section
-    const scoreLabel = this.add.text(0, -65, 'FINAL SCORE', {
+    const scoreLabel = this.add.text(0, -75, 'PUNTUACIÓN FINAL', {
       fontFamily: 'Space Grotesk, sans-serif',
       fontSize: '12px',
       fontStyle: 'bold',
       color: '#718096',
     }).setOrigin(0.5);
 
-    const scoreValue = this.add.text(0, -30, '0', {
+    const scoreValue = this.add.text(0, -40, '0', {
       fontFamily: 'Space Grotesk, Outfit, sans-serif',
-      fontSize: '44px',
+      fontSize: '42px',
       fontStyle: 'bold',
       color: '#00F0FF',
     }).setOrigin(0.5);
@@ -107,57 +109,90 @@ export class GameOverScene extends Phaser.Scene {
     });
 
     // Best Score Section
-    const bestLabel = this.add.text(0, 35, 'BEST RECORD', {
+    const bestLabel = this.add.text(0, 20, 'MEJOR RÉCORD', {
       fontFamily: 'Space Grotesk, sans-serif',
       fontSize: '11px',
       fontStyle: 'bold',
       color: '#718096',
     }).setOrigin(0.5);
 
-    const bestValue = this.add.text(0, 58, data.highScore.toString().padStart(6, '0'), {
+    const bestValue = this.add.text(0, 42, data.highScore.toString().padStart(6, '0'), {
       fontFamily: 'Space Grotesk, sans-serif',
-      fontSize: '20px',
+      fontSize: '18px',
       fontStyle: 'bold',
       color: '#FFFFFF',
     }).setOrigin(0.5);
 
-    // 3. Play Again Button
-    const btnContainer = this.add.container(0, 130);
-    const btnBg = this.add.graphics();
-    btnBg.fillStyle(0x00f0ff, 1);
-    btnBg.fillRoundedRect(-120, -25, 240, 50, 10);
+    // 3. Action Buttons: Play Again & Back to Menu
+    const playAgainBtn = this.add.container(0, 100);
+    const playBg = this.add.graphics();
+    playBg.fillStyle(0x00f0ff, 1);
+    playBg.fillRoundedRect(-130, -20, 260, 42, 8);
 
-    const btnText = this.add.text(0, 0, 'PLAY AGAIN', {
+    const playText = this.add.text(0, 0, 'JUGAR DE NUEVO', {
       fontFamily: 'Space Grotesk, Outfit, sans-serif',
-      fontSize: '18px',
+      fontSize: '15px',
       fontStyle: 'bold',
-      color: '#0e1013',
+      color: '#0a0c0f',
     }).setOrigin(0.5);
 
-    btnContainer.add([btnBg, btnText]);
+    playAgainBtn.add([playBg, playText]);
+    playAgainBtn.setSize(260, 42);
+    playAgainBtn.setInteractive({ useHandCursor: true });
 
-    // Button Interactivity
-    btnContainer.setSize(240, 50);
-    btnContainer.setInteractive({ useHandCursor: true });
-
-    btnContainer.on('pointerdown', () => {
+    playAgainBtn.on('pointerdown', () => {
       HapticsAdapter.impactMedium();
-      btnContainer.setScale(0.95);
+      playAgainBtn.setScale(0.96);
     });
 
-    btnContainer.on('pointerup', () => {
-      btnContainer.setScale(1);
+    playAgainBtn.on('pointerup', () => {
+      playAgainBtn.setScale(1);
       this.scene.stop('GameOverScene');
-      this.scene.start('GameScene');
+      this.scene.start('GameScene', { mode: data.mode });
     });
 
-    btnContainer.on('pointerout', () => {
-      btnContainer.setScale(1);
+    playAgainBtn.on('pointerout', () => {
+      playAgainBtn.setScale(1);
     });
 
-    card.add([cardBg, title, scoreLabel, scoreValue, bestLabel, bestValue, btnContainer]);
+    // Menu Button
+    const menuBtn = this.add.container(0, 155);
+    const menuBg = this.add.graphics();
+    menuBg.fillStyle(0x1a212d, 1);
+    menuBg.fillRoundedRect(-130, -18, 260, 38, 8);
+    menuBg.lineStyle(1.5, 0x2d3748, 1);
+    menuBg.strokeRoundedRect(-130, -18, 260, 38, 8);
 
-    // Entrance Animation for Card
+    const menuText = this.add.text(0, 0, 'VOLVER AL MENÚ', {
+      fontFamily: 'Space Grotesk, sans-serif',
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#A0AEC0',
+    }).setOrigin(0.5);
+
+    menuBtn.add([menuBg, menuText]);
+    menuBtn.setSize(260, 38);
+    menuBtn.setInteractive({ useHandCursor: true });
+
+    menuBtn.on('pointerdown', () => {
+      HapticsAdapter.impactLight();
+      menuBtn.setScale(0.96);
+    });
+
+    menuBtn.on('pointerup', () => {
+      menuBtn.setScale(1);
+      this.scene.stop('GameOverScene');
+      this.scene.stop('GameScene');
+      this.scene.start('HomeScene');
+    });
+
+    menuBtn.on('pointerout', () => {
+      menuBtn.setScale(1);
+    });
+
+    card.add([cardBg, title, scoreLabel, scoreValue, bestLabel, bestValue, playAgainBtn, menuBtn]);
+
+    // Entrance Animation
     this.tweens.add({
       targets: card,
       scaleX: 1,
