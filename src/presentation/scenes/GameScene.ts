@@ -13,6 +13,8 @@ import { FloatingTextPool } from '../effects/FloatingTextPool';
 import { ScreenJuice } from '../effects/ScreenJuice';
 import { HapticsAdapter } from '../../infrastructure/haptics/HapticsAdapter';
 
+import { MultiplierBucketsView } from '../ui/MultiplierBucketsView';
+
 export class GameScene extends Phaser.Scene {
   // Domain State
   private grid!: HexGrid;
@@ -24,6 +26,7 @@ export class GameScene extends Phaser.Scene {
   private fallingBubblesGroup!: Phaser.Physics.Arcade.Group;
   private aimGuide!: AimGuide;
   private cannon!: CannonView;
+  private multiplierBuckets!: MultiplierBucketsView;
 
   // Active Projectile
   private activeProjectile: Phaser.Types.Physics.Arcade.ImageWithDynamicBody | null = null;
@@ -63,15 +66,25 @@ export class GameScene extends Phaser.Scene {
 
     // 3. Falling Bubbles Physics Group (for Peggle gravity drops)
     this.fallingBubblesGroup = this.physics.add.group({
-      bounceX: 0.6,
-      bounceY: 0.5,
+      bounceX: 0.7,
+      bounceY: 0.6,
       collideWorldBounds: true,
     });
+    // Bubbles bounce between each other in mid-air
+    this.physics.add.collider(this.fallingBubblesGroup, this.fallingBubblesGroup);
 
     // 4. Create Background, Walls & Header HUD
     this.createEnvironment();
 
-    // 5. Create Aim Guide & Cannon
+    // 5. Create Multiplier Buckets & Register Overlaps
+    this.multiplierBuckets = new MultiplierBucketsView(this, (event) => {
+      this.addScore(event.scoreAwarded);
+    });
+    this.multiplierBuckets.registerFallingOverlap(this.fallingBubblesGroup, (event) => {
+      this.addScore(event.scoreAwarded);
+    });
+
+    // 6. Create Aim Guide & Cannon
     this.aimGuide = new AimGuide(this);
     this.cannon = new CannonView(this, this.PLAY_WIDTH / 2, this.CANNON_Y);
 
