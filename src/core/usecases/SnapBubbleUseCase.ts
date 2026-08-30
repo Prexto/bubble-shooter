@@ -30,7 +30,7 @@ export class SnapBubbleUseCase {
 
       for (let c = 0; c < cols; c++) {
         if (grid.isEmpty(0, c)) {
-          const cellPixel = HexMath.hexToPixel({ row: 0, col: c }, metrics);
+          const cellPixel = HexMath.hexToPixel({ row: 0, col: c }, metrics, grid.topParity);
           const dx = Math.abs(impactPoint.x - cellPixel.x);
           if (dx < minDistance) {
             minDistance = dx;

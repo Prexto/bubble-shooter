@@ -26,7 +26,6 @@ export class HexMath {
   ): HexMetrics {
     const bubbleDiameter = gridWidth / evenCols;
     const bubbleRadius = bubbleDiameter / 2;
-    // In equilateral hexagonal packing, vertical pitch is radius * sqrt(3)
     const rowHeight = bubbleRadius * Math.sqrt(3);
     const startX = bubbleRadius;
 
@@ -39,17 +38,27 @@ export class HexMath {
     };
   }
 
-  public static hexToPixel(coord: HexCoord, metrics: HexMetrics): PixelPoint {
-    const isOdd = coord.row % 2 !== 0;
-    const offsetX = isOdd ? metrics.bubbleRadius : 0;
+  public static hexToPixel(
+    coord: HexCoord,
+    metrics: HexMetrics,
+    topParity: number = 0
+  ): PixelPoint {
+    const isOddStyle = (coord.row + topParity) % 2 !== 0;
+    const offsetX = isOddStyle ? metrics.bubbleRadius : 0;
     const x = metrics.startX + offsetX + coord.col * metrics.bubbleDiameter;
     const y = metrics.startY + coord.row * metrics.rowHeight;
     return { x, y };
   }
 
-  public static getNeighborCoords(row: number, col: number, grid?: HexGrid): HexCoord[] {
-    const isEven = row % 2 === 0;
-    const candidates: HexCoord[] = isEven
+  public static getNeighborCoords(
+    row: number,
+    col: number,
+    grid?: HexGrid
+  ): HexCoord[] {
+    const rowParity = grid ? grid.getRowParity(row) : row % 2;
+    const isEvenStyle = rowParity === 0;
+
+    const candidates: HexCoord[] = isEvenStyle
       ? [
           { row, col: col - 1 },         // Left
           { row, col: col + 1 },         // Right
@@ -85,14 +94,13 @@ export class HexMath {
     let closestCoord: HexCoord = { row: 0, col: 0 };
     let minDistanceSq = Number.MAX_VALUE;
 
-    // Check candidate rows around the approximate row
     const rowMin = Math.max(0, clampedRow - 1);
     const rowMax = Math.min(grid.config.maxRows - 1, clampedRow + 1);
 
     for (let r = rowMin; r <= rowMax; r++) {
       const cols = grid.getColsInRow(r);
       for (let c = 0; c < cols; c++) {
-        const cellPixel = HexMath.hexToPixel({ row: r, col: c }, metrics);
+        const cellPixel = HexMath.hexToPixel({ row: r, col: c }, metrics, grid.topParity);
         const dx = point.x - cellPixel.x;
         const dy = point.y - cellPixel.y;
         const distSq = dx * dx + dy * dy;
@@ -125,7 +133,7 @@ export class HexMath {
     let minDistSq = Number.MAX_VALUE;
 
     for (const neighbor of emptyNeighbors) {
-      const cellPos = HexMath.hexToPixel(neighbor, metrics);
+      const cellPos = HexMath.hexToPixel(neighbor, metrics, grid.topParity);
       const dx = impactPoint.x - cellPos.x;
       const dy = impactPoint.y - cellPos.y;
       const distSq = dx * dx + dy * dy;

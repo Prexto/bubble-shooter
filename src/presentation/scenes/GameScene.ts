@@ -62,6 +62,7 @@ export class GameScene extends Phaser.Scene {
   private modeSpecialText!: Phaser.GameObjects.Text;
   private threatDots: Phaser.GameObjects.Image[] = [];
   private deathLineSprite!: Phaser.GameObjects.Image;
+  private ceilingGlow!: Phaser.GameObjects.Graphics;
 
   // Layout Constants
   private readonly CEILING_Y = 70;
@@ -179,9 +180,13 @@ export class GameScene extends Phaser.Scene {
       else if (this.modeType === GameModeType.PEGGLE_FEVER) this.highScore = user.stats.peggleFeverHighScore;
     }
 
+    // Ceiling Warning Glow
+    this.ceilingGlow = this.add.graphics();
+    this.ceilingGlow.setDepth(29);
+
     // Top HUD Bar Background
     const headerBg = this.add.graphics();
-    headerBg.fillStyle(0x0a0c0f, 0.95);
+    headerBg.fillStyle(0x0a0c0f, 0.96);
     headerBg.fillRect(0, 0, this.PLAY_WIDTH, this.CEILING_Y);
     headerBg.lineStyle(2, 0x1f242d, 1);
     headerBg.lineBetween(0, this.CEILING_Y, this.PLAY_WIDTH, this.CEILING_Y);
@@ -348,7 +353,7 @@ export class GameScene extends Phaser.Scene {
 
     const obstacles = Array.from(this.bubbleSprites.entries()).map(([key, _sprite]) => {
       const [r, c] = key.split(',').map(Number);
-      const cellPos = HexMath.hexToPixel({ row: r ?? 0, col: c ?? 0 }, this.metrics);
+      const cellPos = HexMath.hexToPixel({ row: r ?? 0, col: c ?? 0 }, this.metrics, this.grid.topParity);
       return {
         x: cellPos.x,
         y: cellPos.y,
@@ -476,7 +481,7 @@ export class GameScene extends Phaser.Scene {
       color: bubbleColor,
     });
 
-    const targetPos = HexMath.hexToPixel(snapCoord, this.metrics);
+    const targetPos = HexMath.hexToPixel(snapCoord, this.metrics, this.grid.topParity);
     const sprite = this.add.image(targetPos.x, targetPos.y, `bubble_${bubbleColor}`);
     sprite.setDepth(10);
     sprite.setScale(0.2);
@@ -526,7 +531,7 @@ export class GameScene extends Phaser.Scene {
       this.addScore(matchScore);
       const centerMatched = result.matchedBubbles[0];
       if (centerMatched) {
-        const pos = HexMath.hexToPixel(centerMatched, this.metrics);
+        const pos = HexMath.hexToPixel(centerMatched, this.metrics, this.grid.topParity);
         FloatingTextPool.show(this, pos.x, pos.y, `+${matchScore}`, '#00F0FF', 22);
       }
 
@@ -544,8 +549,8 @@ export class GameScene extends Phaser.Scene {
 
     if (this.modeType === GameModeType.CLASSIC_ARCADE) {
       this.updateThreatUI();
-      if (result.threatStatus.shouldShiftDown && result.shiftedBubbles) {
-        this.animateGridShiftDown(result.shiftedBubbles);
+      if (result.threatStatus.shouldShiftDown && result.shiftData) {
+        this.animateGridShiftDown(result.shiftData);
       } else {
         this.isProcessingShot = false;
       }
@@ -590,29 +595,83 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private animateGridShiftDown(shiftedBubbles: Bubble[]): void {
-    ScreenJuice.shake(this, 0.008, 100);
-    HapticsAdapter.impactMedium();
+  private animateGridShiftDown(shiftData: { shifted: Bubble[]; newRow: Bubble[] }): void {
+    ScreenJuice.shake(this, 0.012, 160);
+    HapticsAdapter.impactHeavy();
 
-    this.bubbleSprites.forEach((sp) => sp.destroy());
-    this.bubbleSprites.clear();
+    // Ceiling Warning Strobe Effect
+    this.ceilingGlow.clear();
+    this.ceilingGlow.fillStyle(0xff0055, 0.35);
+    this.ceilingGlow.fillRect(0, this.CEILING_Y - 4, this.PLAY_WIDTH, 12);
 
-    for (const b of shiftedBubbles) {
-      const targetPos = HexMath.hexToPixel(b, this.metrics);
+    this.tweens.add({
+      targets: this.ceilingGlow,
+      alpha: 0,
+      duration: 350,
+      ease: 'Power2',
+      onComplete: () => {
+        this.ceilingGlow.clear();
+        this.ceilingGlow.setAlpha(1);
+      },
+    });
+
+    const newSpriteMap = new Map<string, Phaser.GameObjects.Image>();
+
+    // 1. Shift existing sprites down by rowHeight smoothly (X remains exactly identical!)
+    for (const b of shiftData.shifted) {
+      const prevKey = HexGrid.getCoordKey(b.row - 1, b.col);
+      const sp = this.bubbleSprites.get(prevKey);
+      const newKey = HexGrid.getCoordKey(b.row, b.col);
+      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
+
+      if (sp) {
+        this.tweens.add({
+          targets: sp,
+          x: targetPos.x,
+          y: targetPos.y,
+          duration: 260,
+          ease: 'Cubic.easeOut',
+        });
+        newSpriteMap.set(newKey, sp);
+      } else {
+        const newSp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
+        newSp.setDepth(10);
+        this.tweens.add({
+          targets: newSp,
+          y: targetPos.y,
+          duration: 260,
+          ease: 'Cubic.easeOut',
+        });
+        newSpriteMap.set(newKey, newSp);
+      }
+    }
+
+    // 2. Animate new top row sliding down from behind the header banner
+    for (const b of shiftData.newRow) {
+      const newKey = HexGrid.getCoordKey(b.row, b.col);
+      const targetPos = HexMath.hexToPixel({ row: b.row, col: b.col }, this.metrics, this.grid.topParity);
+
       const sp = this.add.image(targetPos.x, targetPos.y - this.metrics.rowHeight, `bubble_${b.color}`);
       sp.setDepth(10);
+      sp.setAlpha(0);
+      sp.setScale(0.7);
 
       this.tweens.add({
         targets: sp,
         y: targetPos.y,
-        duration: 200,
-        ease: 'Bounce.easeOut',
+        alpha: 1,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 280,
+        ease: 'Back.easeOut',
       });
 
-      this.bubbleSprites.set(HexGrid.getCoordKey(b.row, b.col), sp);
+      newSpriteMap.set(newKey, sp);
     }
 
-    this.time.delayedCall(220, () => {
+    this.bubbleSprites = newSpriteMap;
+
+    this.time.delayedCall(300, () => {
       this.isProcessingShot = false;
     });
   }
@@ -653,7 +712,7 @@ export class GameScene extends Phaser.Scene {
         });
 
         this.grid.setBubble(bubble);
-        const pos = HexMath.hexToPixel({ row: r, col: c }, this.metrics);
+        const pos = HexMath.hexToPixel({ row: r, col: c }, this.metrics, this.grid.topParity);
         const sp = this.add.image(pos.x, pos.y, `bubble_${color}`);
         sp.setDepth(10);
         this.bubbleSprites.set(HexGrid.getCoordKey(r, c), sp);

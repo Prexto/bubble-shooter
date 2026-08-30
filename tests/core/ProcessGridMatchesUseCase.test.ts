@@ -27,7 +27,6 @@ describe('ProcessGridMatchesUseCase Orchestration', () => {
 
     expect(result.wasMatch).toBe(true);
     expect(result.matchedBubbles.length).toBe(3);
-    // hangingOrphan was detached because (0, 0), (0, 1), and (1, 0) were popped
     expect(result.orphanBubbles.length).toBe(1);
     expect(result.orphanBubbles[0]?.id).toBe('hang');
     expect(grid.count()).toBe(0);
@@ -58,7 +57,7 @@ describe('ProcessGridMatchesUseCase Orchestration', () => {
 
     expect(res2.wasMatch).toBe(false);
     expect(res2.threatStatus.shouldShiftDown).toBe(true);
-    expect(res2.shiftedBubbles).toBeDefined();
+    expect(res2.shiftData).toBeDefined();
     // Verify previous bubbles moved to row 1
     const shiftedB1 = grid.getBubble(1, 0);
     expect(shiftedB1?.color).toBe(BubbleColor.CYAN);

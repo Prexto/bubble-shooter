@@ -16,7 +16,10 @@ export interface ProcessMatchesResult {
     maxMisses: number;
   };
   dangerStatus: DangerStatus;
-  shiftedBubbles?: Bubble[] | undefined;
+  shiftData?: {
+    shifted: Bubble[];
+    newRow: Bubble[];
+  } | undefined;
 }
 
 export class ProcessGridMatchesUseCase {
@@ -35,7 +38,7 @@ export class ProcessGridMatchesUseCase {
 
     let matchedBubbles: Bubble[] = [];
     let orphanBubbles: Bubble[] = [];
-    let shiftedBubbles: Bubble[] | undefined;
+    let shiftData: { shifted: Bubble[]; newRow: Bubble[] } | undefined;
 
     if (wasMatch) {
       // Mark and remove matched bubbles
@@ -58,9 +61,11 @@ export class ProcessGridMatchesUseCase {
 
     // 4. Handle grid shift down if threat threshold reached
     if (threatStatus.shouldShiftDown) {
-      const topCols = grid.getColsInRow(0);
+      // With the new topParity, after shiftDown the new top row will have (grid.topParity + 1) % 2 parity
+      const futureTopParity = (grid.topParity + 1) % 2;
+      const topCols = futureTopParity === 0 ? grid.config.evenCols : grid.config.oddCols;
       const newTopBubbles = generateNewRowCallback ? generateNewRowCallback(topCols) : undefined;
-      shiftedBubbles = grid.shiftDown(newTopBubbles);
+      shiftData = grid.shiftDown(newTopBubbles);
     }
 
     // 5. Evaluate death line danger
@@ -73,7 +78,7 @@ export class ProcessGridMatchesUseCase {
       wasMatch,
       threatStatus,
       dangerStatus,
-      shiftedBubbles,
+      shiftData,
     };
   }
 }
