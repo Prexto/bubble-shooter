@@ -1,0 +1,19 @@
+# Context & prompt files
+context.md
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+android/
+ios/
+
+# Environment and IDE
+.env
+.env.local
+.DS_Store
+*.log
+.gemini/
